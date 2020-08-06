@@ -379,33 +379,21 @@ int Controller::run(const CliArgsParser& args)
 		return EXIT_SUCCESS;
 	}
 
-	unsigned int i = 0;
-	for (const auto& url : urlcfg->get_urls()) {
-		try {
-			bool ignore_disp =
-				(cfg.get_configvalue("ignore-mode") ==
-					"display");
-			std::shared_ptr<RssFeed> feed =
-				rsscache->internalize_rssfeed(
-					url, ignore_disp ? &ign : nullptr);
-			feed->set_tags(urlcfg->get_tags(url));
-			feed->set_order(i);
-			feedcontainer.add_feed(feed);
-		} catch (const DbException& e) {
-			std::cout << _("Error while loading feeds from "
-					"database: ")
-				<< e.what() << std::endl;
-			return EXIT_FAILURE;
-		} catch (const std::string& str) {
-			std::cout << strprintf::fmt(
-					_("Error while loading feed '%s': "
-						"%s"),
-					url,
-					str)
-				<< std::endl;
-			return EXIT_FAILURE;
-		}
-		i++;
+	bool ignore_disp =
+		(cfg.get_configvalue("ignore-mode") == "display");
+	std::vector<std::shared_ptr<RssFeed>> feeds_from_cache;
+	try {
+		feeds_from_cache = rsscache->internalize_rssfeeds(urlcfg,
+			ignore_disp ? &ign : nullptr);
+		feedcontainer.add_feeds(feeds_from_cache);
+	} catch (const DbException& e) {
+		std::cout << _("Error while loading feeds from "
+				"database: ")
+			<< e.what() << std::endl;
+		return EXIT_FAILURE;
+	} catch (const std::string& str) {
+		std::cout << str << std::endl;
+		return EXIT_FAILURE;
 	}
 
 	std::vector<std::string> tags = urlcfg->get_alltags();

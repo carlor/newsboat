@@ -19,6 +19,7 @@ public:
 	void sort_feeds(const FeedSortStrategy& sort_strategy);
 	std::shared_ptr<RssFeed> get_feed(const unsigned int pos);
 	void add_feed(const std::shared_ptr<RssFeed> feed);
+	void add_feeds(const std::vector<std::shared_ptr<RssFeed>>& new_feeds);
 	void mark_all_feed_items_read(const unsigned int feed_pos);
 	void mark_all_feeds_read();
 	unsigned int get_feed_count_per_tag(const std::string& tag);

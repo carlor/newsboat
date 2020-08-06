@@ -198,6 +198,10 @@ public:
 		std::lock_guard<std::mutex> guard(status_mutex_);
 		status_ = st;
 	}
+	void set_cache(Cache *c)
+	{
+		ch = c;
+	}
 
 	void unload();
 	void load();

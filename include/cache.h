@@ -13,6 +13,7 @@ namespace newsboat {
 class RssFeed;
 class RssIgnores;
 class RssItem;
+class UrlReader;
 
 struct SchemaVersion {
 	unsigned int major, minor;
@@ -46,6 +47,8 @@ public:
 	void externalize_rssfeed(std::shared_ptr<RssFeed> feed,
 		bool reset_unread);
 	std::shared_ptr<RssFeed> internalize_rssfeed(std::string rssurl,
+		RssIgnores* ign);
+	std::vector<std::shared_ptr<RssFeed>> internalize_rssfeeds(UrlReader* urls,
 		RssIgnores* ign);
 	void update_rssitem_unread_and_enqueued(std::shared_ptr<RssItem> item,
 		const std::string& feedurl);
@@ -105,6 +108,9 @@ private:
 		int (*callback)(void*, int, char**, char**),
 		void* callback_argument,
 		bool do_throw);
+
+	void post_process_internalized_feed(std::shared_ptr<RssFeed> feed,
+		RssIgnores* ign);
 
 	sqlite3* db;
 	ConfigContainer* cfg;

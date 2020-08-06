@@ -139,6 +139,12 @@ void FeedContainer::add_feed(const std::shared_ptr<RssFeed> feed)
 	feeds.push_back(feed);
 }
 
+void FeedContainer::add_feeds(const std::vector<std::shared_ptr<RssFeed>>& new_feeds)
+{
+	std::lock_guard<std::mutex> feedslock(feeds_mutex);
+	feeds.insert(feeds.end(), new_feeds.begin(), new_feeds.end());
+}
+
 void FeedContainer::populate_query_feeds()
 {
 	std::lock_guard<std::mutex> feedslock(feeds_mutex);

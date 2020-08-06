@@ -168,6 +168,59 @@ static int vectorofstring_callback(void* vp, int argc, char** argv,
 	return 0;
 }
 
+static int rssfeed_and_rssitem_callback(void* myfeeds, int argc, char** argv,
+	char** /* azColName */)
+{
+	std::unordered_map<std::string, std::shared_ptr<RssFeed>>* feeds_by_url =
+		static_cast<std::unordered_map<std::string, std::shared_ptr<RssFeed>>*>(myfeeds);
+	assert(argc == 16);
+
+	assert(argv[0] != nullptr);
+	std::string url(argv[0]);
+
+	std::shared_ptr<RssFeed> feed;
+	auto lookup = feeds_by_url->find(url);
+	if (lookup == feeds_by_url->end()) {
+		// first look at this feed
+		feed = std::shared_ptr<RssFeed>(new RssFeed(nullptr));
+		feed->set_rssurl(url);
+
+		assert(argv[1] != nullptr);
+		assert(argv[2] != nullptr);
+		assert(argv[3] != nullptr);
+		feed->set_title(argv[1]);
+		feed->set_link(argv[2]);
+		feed->set_rtl(strcmp(argv[3], "1") == 0);
+		(*feeds_by_url)[url] = feed;
+	} else {
+		feed = lookup->second;
+	}
+
+	std::shared_ptr<RssItem> item(new RssItem(nullptr));
+
+	item->set_guid(argv[4]);
+	item->set_title(argv[5]);
+	item->set_author(argv[6]);
+	item->set_link(argv[7]);
+
+	std::istringstream is(argv[8]);
+	time_t t;
+	is >> t;
+	item->set_pubDate(t);
+
+	item->set_size(utils::to_u(argv[9]));
+	item->set_unread((std::string("1") == argv[10]));
+
+	item->set_enclosure_url(argv[11] ? argv[11] : "");
+	item->set_enclosure_type(argv[12] ? argv[12] : "");
+	item->set_enqueued((std::string("1") == (argv[13] ? argv[13] : "")));
+	item->set_flags(argv[14] ? argv[14] : "");
+	item->set_base(argv[15] ? argv[15] : "");
+
+	feed->add_item(item);
+	return 0;
+}
+
 static int rssitem_callback(void* myfeed, int argc, char** argv,
 	char** /* azColName */)
 {
@@ -557,50 +610,8 @@ void Cache::externalize_rssfeed(std::shared_ptr<RssFeed> feed,
 	}
 }
 
-// this function reads an RssFeed including all of its RssItems.
-// the feed parameter needs to have the rssurl member set.
-std::shared_ptr<RssFeed> Cache::internalize_rssfeed(std::string rssurl,
-	RssIgnores* ign)
-{
-	ScopeMeasure m1("Cache::internalize_rssfeed");
-
-	std::shared_ptr<RssFeed> feed(new RssFeed(this));
-	feed->set_rssurl(rssurl);
-
-	if (utils::is_query_url(rssurl)) {
-		return feed;
-	}
-
-	std::lock_guard<std::mutex> lock(mtx);
-	std::lock_guard<std::mutex> feedlock(feed->item_mutex);
-
-	/* first, we check whether the feed is there at all */
-	std::string query = prepare_query(
-			"SELECT count(*) FROM rss_feed WHERE rssurl = '%q';", rssurl);
-	CbHandler count_cbh;
-	run_sql(query, count_callback, &count_cbh);
-
-	if (count_cbh.count() == 0) {
-		return feed;
-	}
-
-	/* then we first read the feed from the database */
-	query = prepare_query(
-			"SELECT title, url, is_rtl FROM rss_feed WHERE rssurl = '%q';",
-			rssurl);
-	run_sql(query, rssfeed_callback, &feed);
-
-	/* ...and then the associated items */
-	query = prepare_query(
-			"SELECT guid, title, author, url, pubDate, length(content), "
-			"unread, "
-			"feedurl, enclosure_url, enclosure_type, enqueued, flags, base "
-			"FROM rss_item "
-			"WHERE feedurl = '%q' "
-			"AND deleted = 0 "
-			"ORDER BY pubDate DESC, id DESC;",
-			rssurl);
-	run_sql(query, rssitem_callback, &feed);
+void Cache::post_process_internalized_feed(std::shared_ptr<RssFeed> feed, RssIgnores* ign) {
+	feed->set_cache(this);
 
 	auto feed_weak_ptr = std::weak_ptr<RssFeed>(feed);
 	for (const auto& item : feed->items()) {
@@ -651,7 +662,119 @@ std::shared_ptr<RssFeed> Cache::internalize_rssfeed(std::string rssurl,
 		feed->add_items(flagged_items);
 	}
 	feed->sort_unlocked(cfg->get_article_sort_strategy());
+}
+
+// this function reads an RssFeed including all of its RssItems.
+// the feed parameter needs to have the rssurl member set.
+std::shared_ptr<RssFeed> Cache::internalize_rssfeed(std::string rssurl,
+	RssIgnores* ign)
+{
+	ScopeMeasure m1("Cache::internalize_rssfeed");
+
+	std::shared_ptr<RssFeed> feed(new RssFeed(this));
+	feed->set_rssurl(rssurl);
+
+	if (utils::is_query_url(rssurl)) {
+		return feed;
+	}
+
+	std::lock_guard<std::mutex> lock(mtx);
+	std::lock_guard<std::mutex> feedlock(feed->item_mutex);
+
+	/* first, we check whether the feed is there at all */
+	std::string query = prepare_query(
+			"SELECT count(*) FROM rss_feed WHERE rssurl = '%q';", rssurl);
+	CbHandler count_cbh;
+	run_sql(query, count_callback, &count_cbh);
+
+	if (count_cbh.count() == 0) {
+		return feed;
+	}
+
+	/* then we first read the feed from the database */
+	query = prepare_query(
+			"SELECT title, url, is_rtl FROM rss_feed WHERE rssurl = '%q';",
+			rssurl);
+	run_sql(query, rssfeed_callback, &feed);
+
+	/* ...and then the associated items */
+	query = prepare_query(
+			"SELECT guid, title, author, url, pubDate, length(content), "
+			"unread, "
+			"feedurl, enclosure_url, enclosure_type, enqueued, flags, base "
+			"FROM rss_item "
+			"WHERE feedurl = '%q' "
+			"AND deleted = 0 "
+			"ORDER BY pubDate DESC, id DESC;",
+			rssurl);
+	run_sql(query, rssitem_callback, &feed);
+
+	post_process_internalized_feed(feed, ign);
 	return feed;
+}
+
+// this function reads all info from a urlcfg in a single query.
+std::vector<std::shared_ptr<RssFeed>> Cache::internalize_rssfeeds(
+		UrlReader* urlcfg, RssIgnores* ign)
+{
+	ScopeMeasure m1("Cache::internalize_rssfeeds");
+
+	LOG(Level::DEBUG, "preparing query...");
+	std::vector<std::string> urls_to_query;
+	std::copy_if(urlcfg->get_urls().begin(), urlcfg->get_urls().end(),
+			std::back_inserter(urls_to_query), &utils::is_http_url);
+
+	std::string urls_query = "(";
+	auto url = urls_to_query.begin();
+	while(url != urls_to_query.end()) {
+		if (url != urls_to_query.begin()) urls_query += ", ";
+		char* piece = sqlite3_mprintf("'%q'", url->c_str());
+		if (piece) {
+			urls_query += piece;
+			sqlite3_free(piece);
+		}
+		url++;
+	}
+	urls_query += ")";
+
+	std::unordered_map<std::string, std::shared_ptr<RssFeed>> feeds_by_url;
+
+	std::lock_guard<std::mutex> lock(mtx);
+	// TODO deal
+	//std::lock_guard<std::mutex> feedlock(feed->item_mutex);
+
+	std::string query = prepare_query(
+			"SELECT feed.rssurl, feed.title, feed.url, feed.is_rtl, "
+			"item.guid, item.title, item.author, item.url, item.pubDate, "
+			"length(item.content), item.unread, "
+			"item.enclosure_url, item.enclosure_type, item.enqueued, "
+			"item.flags, item.base "
+			"FROM rss_feed feed "
+			"JOIN rss_item item ON feed.rssurl = item.feedurl "
+			"WHERE feed.rssurl IN %s "
+			"AND item.deleted = 0 "
+			"ORDER BY item.pubDate DESC, item.id DESC;",
+			urls_query);
+	run_sql(query, rssfeed_and_rssitem_callback, &feeds_by_url);
+
+	std::vector<std::shared_ptr<RssFeed>> feeds;
+	unsigned int i = 0;
+	for (const auto& url : urlcfg->get_urls()) {
+		std::shared_ptr<RssFeed> feed;
+		auto lookup = feeds_by_url.find(url);
+		if (lookup != feeds_by_url.end()) {
+			feed = lookup->second;
+			post_process_internalized_feed(feed, ign);
+		} else {
+			feed = std::shared_ptr<RssFeed>(new RssFeed(this));
+		}
+		feed->set_rssurl(url);
+		feed->set_tags(urlcfg->get_tags(url));
+		feed->set_order(i);
+		feeds.push_back(feed);
+		i++;
+	}
+	return feeds;
 }
 
 std::vector<std::shared_ptr<RssItem>> Cache::search_for_items(
